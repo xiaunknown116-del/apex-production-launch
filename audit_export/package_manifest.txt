@@ -1,0 +1,7 @@
+audit_export_20260911.json          # Primary audit export (JSON)
+audit_export_20260911.json.sha256   # SHA256 checksum for the JSON file
+audit_export_20260911.json.asc      # ASCII detached GPG signature (created by sign_audit.sh)
+sign_audit.sh                       # Script to sign the JSON with GPG
+upload_to_s3.sh                     # Script to upload JSON + signature to S3 with SSE
+README.md                           # Instructions and verification steps
+package_manifest.txt                # This file
