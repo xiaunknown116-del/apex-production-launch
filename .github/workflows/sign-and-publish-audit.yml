@@ -1,0 +1,72 @@
+name: Sign and Publish Audit Export
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Optional release tag"
+        required: false
+        default: ""
+
+jobs:
+  sign-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      EXPORT_DIR: audit_export
+      AWS_REGION: us-east-1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure export exists
+        run: ls -la "$EXPORT_DIR" || { echo "No audit export found"; exit 1; }
+      - name: Install tools
+        run: sudo apt-get update -y && sudo apt-get install -y gnupg awscli
+      - name: Import GPG key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          export GNUPGHOME="$(mktemp -d)"
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          echo "GPG key imported"
+      - name: Sign export
+        env:
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          for f in "$EXPORT_DIR"/*.json; do
+            if [ -n "${GPG_PASSPHRASE:-}" ]; then
+              gpg --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" \
+                  --armor --detach-sign --output "${f}.asc" "$f"
+            else
+              gpg --batch --yes --armor --detach-sign --output "${f}.asc" "$f"
+            fi
+            gpg --verify "${f}.asc" "$f"
+          done
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Upload to S3
+        env:
+          S3_BUCKET: ${{ secrets.S3_BUCKET }}
+        run: |
+          for f in "$EXPORT_DIR"/*; do
+            aws s3 cp "$f" "s3://${S3_BUCKET}/$(basename $f)" \
+              --sse AES256 --acl bucket-owner-full-control
+          done
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.release_tag || format('audit-{0}', github.run_id) }}
+          name: Audit Export
+          draft: true
+          files: |
+            audit_export/*.json
+            audit_export/*.asc
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
